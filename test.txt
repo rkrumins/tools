@@ -50,6 +50,45 @@ def transform_html_to_outlook(html_file):
     html_content = re.sub(r'<div\s*(.+?)\s*style="(.+?)">(.*?)</div>', replace_div_tags, html_content, flags=re.DOTALL)
     html_content = re.sub(r'<div\s*(.+?)>(.*?)</div>', r'<table width="100%"><tr><td>\2</td></tr></table>', html_content, flags=re.DOTALL)
 
+    # Format <div> tags in Outlook HTML
+    def format_div_tags(match):
+        div_content = match.group(1)
+        div_styles = match.group(2) or ''
+        table_styles = re.sub(r'([^:]+):\s*([^;]+);?', r'"\1": "\2",', div_styles)
+        table_styles = '{' + table_styles.rstrip(',') + '}'
+        return f'''
+        <div>
+            <!--[if mso]>
+            <table width="100%" style={table_styles}>
+                <tr>
+                    <td>
+            <![endif]-->
+            {div_content}
+            <!--[if mso]>
+                    </td>
+                </tr>
+            </table>
+            <![endif]-->
+        </div>
+        '''
+
+    html_content = re.sub(r'<div\s*(.+?)\s*style="(.+?)">(.*?)</div>', format_div_tags, html_content, flags=re.DOTALL)
+    html_content = re.sub(r'<div\s*(.+?)>(.*?)</div>', r'''
+        <div>
+            <!--[if mso]>
+            <table width="100%">
+                <tr>
+                    <td>
+            <![endif]-->
+            \2
+            <!--[if mso]>
+                    </td>
+                </tr>
+            </table>
+            <![endif]-->
+        </div>
+        ''', html_content, flags=re.DOTALL)
+
     # Wrap the content inside a table layout
     outlook_compatible_html = f'''
     <html>
@@ -90,4 +129,4 @@ outlook_compatible_html = transform_html_to_outlook(input_html_file)
 with open(output_html_file, 'w') as file:
     file.write(outlook_compatible_html)
 
-print(f"Outlook-compatible HTML has been generated and saved to {output_html_file}")
+print(f"Outlook-compatible HTML with formatted <div> tags has been generated and saved to {output_html_file}")
