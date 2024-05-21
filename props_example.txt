@@ -1,0 +1,200 @@
+db.property_templates.insertMany([
+  {
+    "identifier": "text_single_line",
+    "name": "Text (Single Line)",
+    "type": "string",
+    "default_value": ""
+  },
+  {
+    "identifier": "text_multi_line",
+    "name": "Text (Multi-Line)",
+    "type": "string",
+    "default_value": ""
+  },
+  {
+    "identifier": "number_integer",
+    "name": "Number (Integer)",
+    "type": "integer",
+    "default_value": 0
+  },
+  {
+    "identifier": "number_decimal",
+    "name": "Number (Decimal)",
+    "type": "number",
+    "default_value": 0.0
+  },
+  {
+    "identifier": "date",
+    "name": "Date",
+    "type": "string",
+    "format": "YYYY-MM-DD",
+    "default_value": ""
+  },
+  {
+    "identifier": "boolean",
+    "name": "Boolean",
+    "type": "boolean",
+    "default_value": false
+  },
+  {
+    "identifier": "single_select",
+    "name": "Single Select",
+    "type": "string",
+    "possible_values": [],
+    "default_value": ""
+  },
+  {
+    "identifier": "multi_select",
+    "name": "Multi-Select",
+    "type": "array",
+    "items": {
+      "type": "string"
+    },
+    "possible_values": [],
+    "default_value": []
+  },
+  {
+    "identifier": "email",
+    "name": "Email",
+    "type": "string",
+    "format": "email",
+    "default_value": ""
+  },
+  {
+    "identifier": "url",
+    "name": "URL",
+    "type": "string",
+    "format": "uri",
+    "default_value": ""
+  },
+  {
+    "identifier": "dictionary",
+    "name": "Dictionary",
+    "type": "object",
+    "default_value": {}
+  }
+]);
+
+db.properties.insertMany([
+  {
+    "template_identifier": "text_single_line",
+    "value": "John Doe"
+  },
+  {
+    "template_identifier": "text_multi_line",
+    "value": "Lorem ipsum dolor sit amet,\nconsectetur adipiscing elit."
+  },
+  {
+    "template_identifier": "number_integer",
+    "value": 42
+  },
+  {
+    "template_identifier": "number_decimal",
+    "value": 3.14
+  },
+  {
+    "template_identifier": "date",
+    "value": "2023-06-15"
+  },
+  {
+    "template_identifier": "boolean",
+    "value": true
+  },
+  {
+    "template_identifier": "single_select",
+    "possible_values": ["Option 1", "Option 2", "Option 3"],
+    "value": "Option 2"
+  },
+  {
+    "template_identifier": "multi_select",
+    "possible_values": ["Option 1", "Option 2", "Option 3"],
+    "value": ["Option 1", "Option 3"]
+  },
+  {
+    "template_identifier": "email",
+    "value": "john.doe@example.com"
+  },
+  {
+    "template_identifier": "url",
+    "value": "https://www.example.com"
+  },
+  {
+    "template_identifier": "dictionary",
+    "value": {
+      "key1": "value1",
+      "key2": 42,
+      "key3": true
+    }
+  }
+]);
+
+db.forms.insertMany([
+  {
+    "name": "User Registration",
+    "properties": [
+      {
+        "template_identifier": "text_single_line",
+        "value": "John"
+      },
+      {
+        "template_identifier": "text_single_line",
+        "value": "Doe"
+      },
+      {
+        "template_identifier": "email",
+        "value": "john.doe@example.com"
+      },
+      {
+        "template_identifier": "text_single_line",
+        "value": "password123"
+      },
+      {
+        "template_identifier": "date",
+        "value": "1990-05-15"
+      },
+      {
+        "template_identifier": "boolean",
+        "value": true
+      }
+    ]
+  },
+  {
+    "name": "Product Listing",
+    "properties": [
+      {
+        "template_identifier": "text_single_line",
+        "value": "Wireless Headphones"
+      },
+      {
+        "template_identifier": "text_multi_line",
+        "value": "High-quality wireless headphones with noise cancellation."
+      },
+      {
+        "template_identifier": "number_decimal",
+        "value": 129.99
+      },
+      {
+        "template_identifier": "number_integer",
+        "value": 50
+      },
+      {
+        "template_identifier": "single_select",
+        "value": "Electronics",
+        "possible_values": ["Electronics", "Clothing", "Home", "Books"]
+      },
+      {
+        "template_identifier": "multi_select",
+        "value": ["Headphones", "Wireless", "Noise Cancellation"],
+        "possible_values": ["Headphones", "Wireless", "Noise Cancellation", "Bluetooth", "Earbuds"]
+      },
+      {
+        "template_identifier": "dictionary",
+        "value": {
+          "brand": "Acme",
+          "color": "Black",
+          "warranty": "1 year"
+        }
+      }
+    ]
+  }
+]);
