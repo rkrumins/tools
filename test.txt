@@ -1,132 +1,76 @@
-import re
-import base64
-import os
-
-def transform_html_to_outlook(html_file):
-    with open(html_file, 'r') as file:
-        html_content = file.read()
-
-    # Convert embedded images to inline base64-encoded images
-    def replace_image_urls(match):
-        img_path = match.group(1)
-        if os.path.exists(img_path):
-            with open(img_path, 'rb') as img_file:
-                img_data = img_file.read()
-                img_base64 = base64.b64encode(img_data).decode('utf-8')
-                img_type = os.path.splitext(img_path)[1][1:]
-                return f'src="data:image/{img_type};base64,{img_base64}"'
-        return match.group(0)
-
-    html_content = re.sub(r'src="(.+?)"', replace_image_urls, html_content)
-
-    # Inline CSS styles
-    def replace_css_links(match):
-        css_path = match.group(1)
-        if os.path.exists(css_path):
-            with open(css_path, 'r') as css_file:
-                css_content = css_file.read()
-                return f'<style>{css_content}</style>'
-        return ''
-
-    html_content = re.sub(r'<link rel="stylesheet" href="(.+?)">', replace_css_links, html_content)
-
-    # Remove any unsupported tags or attributes
-    html_content = re.sub(r'<script.+?</script>', '', html_content, flags=re.DOTALL)
-    html_content = re.sub(r'<iframe.+?</iframe>', '', html_content, flags=re.DOTALL)
-    html_content = re.sub(r'<form.+?</form>', '', html_content, flags=re.DOTALL)
-    html_content = re.sub(r'<input.+?>', '', html_content)
-    html_content = re.sub(r'<textarea.+?</textarea>', '', html_content, flags=re.DOTALL)
-    html_content = re.sub(r'<select.+?</select>', '', html_content, flags=re.DOTALL)
-    html_content = re.sub(r'<button.+?</button>', '', html_content, flags=re.DOTALL)
-
-    # Convert <div> tags to table-based layout
-    def replace_div_tags(match):
-        div_content = match.group(1)
-        div_styles = match.group(2) or ''
-        table_styles = re.sub(r'([^:]+):\s*([^;]+);?', r'"\1": "\2",', div_styles)
-        table_styles = '{' + table_styles.rstrip(',') + '}'
-        return f'<table width="100%" style={table_styles}><tr><td>{div_content}</td></tr></table>'
-
-    html_content = re.sub(r'<div\s*(.+?)\s*style="(.+?)">(.*?)</div>', replace_div_tags, html_content, flags=re.DOTALL)
-    html_content = re.sub(r'<div\s*(.+?)>(.*?)</div>', r'<table width="100%"><tr><td>\2</td></tr></table>', html_content, flags=re.DOTALL)
-
-    # Format <div> tags in Outlook HTML
-    def format_div_tags(match):
-        div_content = match.group(1)
-        div_styles = match.group(2) or ''
-        table_styles = re.sub(r'([^:]+):\s*([^;]+);?', r'"\1": "\2",', div_styles)
-        table_styles = '{' + table_styles.rstrip(',') + '}'
-        return f'''
-        <div>
-            <!--[if mso]>
-            <table width="100%" style={table_styles}>
-                <tr>
-                    <td>
-            <![endif]-->
-            {div_content}
-            <!--[if mso]>
-                    </td>
-                </tr>
-            </table>
-            <![endif]-->
-        </div>
-        '''
-
-    html_content = re.sub(r'<div\s*(.+?)\s*style="(.+?)">(.*?)</div>', format_div_tags, html_content, flags=re.DOTALL)
-    html_content = re.sub(r'<div\s*(.+?)>(.*?)</div>', r'''
-        <div>
-            <!--[if mso]>
-            <table width="100%">
-                <tr>
-                    <td>
-            <![endif]-->
-            \2
-            <!--[if mso]>
-                    </td>
-                </tr>
-            </table>
-            <![endif]-->
-        </div>
-        ''', html_content, flags=re.DOTALL)
-
-    # Wrap the content inside a table layout
-    outlook_compatible_html = f'''
-    <html>
-    <head>
-        <style>
-            table {{
-                border-collapse: collapse;
-                mso-table-lspace: 0pt;
-                mso-table-rspace: 0pt;
-            }}
-            td {{
-                font-family: Arial, sans-serif;
-                font-size: 14px;
-                padding: 10px;
-            }}
-        </style>
-    </head>
-    <body>
-        <table width="100%" border="0" cellpadding="0" cellspacing="0">
-            <tr>
-                <td>
-                    {html_content}
-                </td>
-            </tr>
-        </table>
-    </body>
-    </html>
-    '''
-
-    return outlook_compatible_html
-
-# Usage example
-input_html_file = 'input.html'
-output_html_file = 'output.html'
-
-outlook_compatible_html = transform_html_to_outlook(input_html_file)
-
-with open(output_html_file, 'w') as file:
-    file.write(outlook_compatible_html)
-
-print(f"Outlook-compatible HTML with formatted <div> tags has been generated and saved to {output_html_file}")
+[
+  {
+    "identifier": "text_single_line",
+    "name": "Text (Single Line)",
+    "type": "string",
+    "default_value": ""
+  },
+  {
+    "identifier": "text_multi_line",
+    "name": "Text (Multi-Line)",
+    "type": "string",
+    "default_value": ""
+  },
+  {
+    "identifier": "number_integer",
+    "name": "Number (Integer)",
+    "type": "integer",
+    "default_value": 0
+  },
+  {
+    "identifier": "number_decimal",
+    "name": "Number (Decimal)",
+    "type": "number",
+    "default_value": 0.0
+  },
+  {
+    "identifier": "date",
+    "name": "Date",
+    "type": "string",
+    "format": "YYYY-MM-DD",
+    "default_value": ""
+  },
+  {
+    "identifier": "boolean",
+    "name": "Boolean",
+    "type": "boolean",
+    "default_value": false
+  },
+  {
+    "identifier": "single_select",
+    "name": "Single Select",
+    "type": "string",
+    "possible_values": [],
+    "default_value": ""
+  },
+  {
+    "identifier": "multi_select",
+    "name": "Multi-Select",
+    "type": "array",
+    "items": {
+      "type": "string"
+    },
+    "possible_values": [],
+    "default_value": []
+  },
+  {
+    "identifier": "email",
+    "name": "Email",
+    "type": "string",
+    "format": "email",
+    "default_value": ""
+  },
+  {
+    "identifier": "url",
+    "name": "URL",
+    "type": "string",
+    "format": "uri",
+    "default_value": ""
+  },
+  {
+    "identifier": "dictionary",
+    "name": "Dictionary",
+    "type": "object",
+    "default_value": {}
+  }
+]
