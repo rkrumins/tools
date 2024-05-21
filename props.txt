@@ -1,0 +1,126 @@
+from fastapi import FastAPI, HTTPException
+from pymongo import MongoClient
+from pydantic import BaseModel, EmailStr, Field
+from typing import List, Dict, Union
+from datetime import datetime
+
+app = FastAPI()
+client = MongoClient("mongodb://localhost:27017")
+db = client["property_management"]
+
+# Create indexes on the frequently queried fields
+db.properties.create_index("template_identifier")
+db.property_templates.create_index("identifier")
+
+class ContactObject(BaseModel):
+    first_name: str
+    last_name: str
+    email: EmailStr
+
+class PropertyTemplate(BaseModel):
+    identifier: str
+    name: str
+    type: str
+    format: Union[str, None] = None
+    possible_values: Union[List[str], None] = None
+    default_value: Union[str, int, float, bool, List, Dict, None] = None
+
+class Property(BaseModel):
+    template_identifier: str
+    value: Union[str, int, float, bool, datetime, ContactObject, List[str], Dict]
+
+class Form(BaseModel):
+    name: str
+    properties: List[Property]
+
+class UnifiedProperty(BaseModel):
+    identifier: str
+    name: str
+    type: str
+    format: Union[str, None] = None
+    possible_values: Union[List[str], None] = None
+    default_value: Union[str, int, float, bool, List, Dict, None] = None
+    value: Union[str, int, float, bool, datetime, ContactObject, List[str], Dict]
+
+# Property Template Endpoints
+
+@app.post("/property-templates")
+def create_property_template(template: PropertyTemplate):
+    if db.property_templates.find_one({"identifier": template.identifier}):
+        raise HTTPException(status_code=400, detail="Property template identifier already exists")
+    db.property_templates.insert_one(template.dict())
+    return {"message": "Property template created successfully"}
+
+@app.get("/property-templates")
+def get_property_templates():
+    templates = list(db.property_templates.find({}, {"_id": 0}))
+    return {"templates": templates}
+
+# Property Endpoints
+
+@app.post("/properties")
+def create_property(property: Property):
+    template = db.property_templates.find_one({"identifier": property.template_identifier})
+    if not template:
+        raise HTTPException(status_code=400, detail="Invalid property template identifier")
+    db.properties.insert_one(property.dict())
+    return {"message": "Property created successfully"}
+
+@app.get("/properties")
+def get_properties():
+    properties = list(db.properties.find({}, {"_id": 0}))
+    return {"properties": properties}
+
+# Form Endpoints
+
+@app.post("/forms")
+def create_form(form: Form):
+    for prop in form.properties:
+        template = db.property_templates.find_one({"identifier": prop.template_identifier})
+        if not template:
+            raise HTTPException(status_code=400, detail=f"Invalid property template identifier: {prop.template_identifier}")
+        if prop.value is None:
+            prop.value = template.get("default_value")
+    db.forms.insert_one(form.dict())
+    return {"message": "Form created successfully"}
+
+@app.get("/forms/{form_name}")
+def get_form(form_name: str):
+    form = db.forms.find_one({"name": form_name}, {"_id": 0})
+    if not form:
+        raise HTTPException(status_code=404, detail="Form not found")
+    return form
+
+# Unified Property Endpoints
+
+@app.get("/forms/{form_name}/unified-properties")
+def get_unified_properties(form_name: str):
+    form = db.forms.find_one({"name": form_name}, {"_id": 0})
+    if not form:
+        raise HTTPException(status_code=404, detail="Form not found")
+
+    unified_properties = []
+    for prop in form["properties"]:
+        unified_prop = db.properties.aggregate([
+            {"$match": {"template_identifier": prop["template_identifier"], "value": prop["value"]}},
+            {"$lookup": {
+                "from": "property_templates",
+                "localField": "template_identifier",
+                "foreignField": "identifier",
+                "as": "template"
+            }},
+            {"$unwind": "$template"},
+            {"$project": {
+                "_id": 0,
+                "identifier": "$template.identifier",
+                "name": "$template.name",
+                "type": "$template.type",
+                "format": "$template.format",
+                "possible_values": "$template.possible_values",
+                "default_value": "$template.default_value",
+                "value": "$value"
+            }}
+        ]).next()
+        unified_properties.append(UnifiedProperty(**unified_prop))
+
+    return {"unified_properties": unified_properties}
