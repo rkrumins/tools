@@ -1,0 +1,307 @@
+from fastapi import FastAPI, HTTPException
+from pymongo import MongoClient
+from bson import ObjectId
+from datetime import datetime
+from pydantic import BaseModel, EmailStr, Field, BeforeValidator
+from typing import List, Union, Dict, Optional, Annotated
+
+app = FastAPI()
+
+# MongoDB connection
+client = MongoClient("mongodb://localhost:27017")
+db = client["property_db"]
+template_collection = db["property_templates"]
+property_collection = db["properties"]
+form_collection = db["forms"]
+
+PyObjectId = Annotated[str, BeforeValidator(str)]
+
+# Pydantic models
+class Contact(BaseModel):
+    first_name: str
+    last_name: str
+    email: EmailStr
+
+class PropertyTemplateCreate(BaseModel):
+    name: str
+    identifier: str
+    type: str
+    mandatory: bool
+    category: str
+    options: Optional[List[str]] = None
+
+class PropertyTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    identifier: Optional[str] = None
+    type: Optional[str] = None
+    mandatory: Optional[bool] = None
+    category: Optional[str] = None
+    options: Optional[List[str]] = None
+
+class PropertyTemplateResponse(BaseModel):
+    id: Optional[PyObjectId] = Field(alias="_id", default=None)
+    id: Optional[PyObjectId] = Field(alias="_id", default=None)
+    name: str
+    identifier: str
+    type: str
+    mandatory: bool
+    category: str
+    options: Optional[List[str]] = None
+
+    class Config:
+        allow_population_by_field_name = True
+
+class PropertyCreate(BaseModel):
+    name: str
+    identifier: str
+    value: Union[str, datetime, Dict, List[str], int]
+    template_identifier: str
+    last_modified_by: str
+    created_by: str
+
+class PropertyUpdate(BaseModel):
+    name: Optional[str] = None
+    identifier: Optional[str] = None
+    value: Optional[Union[str, datetime, Dict, List[str], int]] = None
+    previous_value: Optional[Union[str, datetime, Dict, List[str], int]] = None
+    template_identifier: Optional[str] = None
+    last_modified_by: Optional[str] = None
+    created_by: Optional[str] = None
+
+class PropertyResponse(BaseModel):
+    id: Optional[PyObjectId] = Field(alias="_id", default=None)
+    name: str
+    identifier: str
+    value: Union[str, datetime, Dict, List[str], int]
+    previous_value: Optional[Union[str, datetime, Dict, List[str], int]]
+    template_identifier: str
+    last_modified_by: str
+    last_modified_date: datetime
+    created_by: str
+
+    class Config:
+        allow_population_by_field_name = True
+
+class JoinedPropertyTemplate(BaseModel):
+    id: str = Field(None, alias="_id")
+    name: str
+    identifier: str
+    value: Union[str, datetime, Dict, List[str], int]
+    previous_value: Optional[Union[str, datetime, Dict, List[str], int]]
+    type: str
+    template_name: str
+    last_modified_by: str
+    last_modified_date: datetime
+    mandatory: bool
+    category: str
+    created_by: str
+    options: Optional[List[str]] = None
+
+    class Config:
+        allow_population_by_field_name = True
+
+class FormCreate(BaseModel):
+    name: str
+    properties: List[str] = []
+
+class FormUpdate(BaseModel):
+    name: Optional[str] = None
+    properties: Optional[List[str]] = None
+
+class FormResponse(BaseModel):
+    id: str = Field(None, alias="_id")
+    name: str
+    properties: List[str] = []
+
+    class Config:
+        allow_population_by_field_name = True
+
+# API endpoints
+@app.get("/properties", response_model=List[PropertyResponse])
+async def get_all_properties():
+    properties = property_collection.find({})
+    return list(properties)
+
+@app.get("/templates", response_model=List[PropertyTemplateResponse])
+async def get_all_property_templates():
+    templates = template_collection.find({})
+    return list(templates)
+
+@app.get("/forms", response_model=List[FormResponse])
+async def get_all_forms():
+    forms = form_collection.find({})
+    return list(forms)
+
+@app.post("/templates", response_model=PropertyTemplateResponse)
+async def create_property_template(template: PropertyTemplateCreate):
+    template_data = template.dict()
+    result = template_collection.insert_one(template_data)
+    template_data["_id"] = str(result.inserted_id)
+    return template_data
+
+@app.put("/templates/{template_id}", response_model=PropertyTemplateResponse)
+async def update_property_template(template_id: str, template: PropertyTemplateUpdate):
+    template_data = template.dict(exclude_unset=True)
+    result = template_collection.update_one({"_id": ObjectId(template_id)}, {"$set": template_data})
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+    updated_template = template_collection.find_one({"_id": ObjectId(template_id)})
+    return updated_template
+
+@app.post("/properties", response_model=PropertyResponse)
+async def create_property(property: PropertyCreate):
+    property_data = property.dict()
+    property_data["last_modified_date"] = datetime.now()
+    result = property_collection.insert_one(property_data)
+    property_data["_id"] = str(result.inserted_id)
+    return property_data
+
+@app.put("/properties/{property_id}", response_model=PropertyResponse)
+async def update_property(property_id: str, property: PropertyUpdate):
+    property_data = property.dict(exclude_unset=True)
+    property_data["last_modified_date"] = datetime.now()
+    result = property_collection.update_one({"_id": ObjectId(property_id)}, {"$set": property_data})
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Property not found")
+    updated_property = property_collection.find_one({"_id": ObjectId(property_id)})
+    return updated_property
+
+@app.get("/properties", response_model=List[JoinedPropertyTemplate])
+async def get_properties():
+    properties = list(property_collection.aggregate([
+        {
+            "$lookup": {
+                "from": "property_templates",
+                "localField": "template_identifier",
+                "foreignField": "identifier",
+                "as": "template"
+            }
+        },
+        {
+            "$unwind": "$template"
+        },
+        {
+            "$project": {
+                "_id": 1,
+                "name": 1,
+                "identifier": 1,
+                "value": 1,
+                "previous_value": 1,
+                "type": "$template.type",
+                "template_name": "$template.name",
+                "last_modified_by": 1,
+                "last_modified_date": 1,
+                "mandatory": "$template.mandatory",
+                "category": "$template.category",
+                "created_by": 1,
+                "options": "$template.options"
+            }
+        }
+    ]))
+
+    return properties
+
+@app.post("/forms", response_model=FormResponse)
+async def create_form(form: FormCreate):
+    form_data = form.dict()
+    result = form_collection.insert_one(form_data)
+    form_data["_id"] = str(result.inserted_id)
+    return form_data
+
+@app.put("/forms/{form_id}", response_model=FormResponse)
+async def update_form(form_id: str, form: FormUpdate):
+    form_data = form.dict(exclude_unset=True)
+    result = form_collection.update_one({"_id": ObjectId(form_id)}, {"$set": form_data})
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Form not found")
+    updated_form = form_collection.find_one({"_id": ObjectId(form_id)})
+    return updated_form
+
+@app.post("/forms/{form_id}/properties", response_model=PropertyResponse)
+async def add_property_to_form(form_id: str, property: PropertyCreate):
+    form = form_collection.find_one({"_id": ObjectId(form_id)})
+    if not form:
+        raise HTTPException(status_code=404, detail="Form not found")
+
+    property_data = property.dict()
+    property_data["last_modified_date"] = datetime.now()
+    result = property_collection.insert_one(property_data)
+    property_id = str(result.inserted_id)
+
+    form_collection.update_one(
+        {"_id": ObjectId(form_id)},
+        {"$push": {"properties": property_id}}
+    )
+
+    property_data["_id"] = property_id
+    return property_data
+
+@app.put("/forms/{form_id}/properties/{property_id}", response_model=PropertyResponse)
+async def update_property_in_form(form_id: str, property_id: str, property: PropertyUpdate):
+    form = form_collection.find_one({"_id": ObjectId(form_id)})
+    if not form:
+        raise HTTPException(status_code=404, detail="Form not found")
+
+    property_data = property.dict(exclude_unset=True)
+    property_data["last_modified_date"] = datetime.now()
+    result = property_collection.update_one(
+        {"_id": ObjectId(property_id)},
+        {"$set": property_data}
+    )
+
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Property not found")
+    updated_property = property_collection.find_one({"_id": ObjectId(property_id)})
+    return updated_property
+
+@app.post("/properties/publish", response_model=PropertyResponse)
+async def publish_property_to_all_forms(property: PropertyCreate):
+    property_data = property.dict()
+    property_data["last_modified_date"] = datetime.now()
+    result = property_collection.insert_one(property_data)
+    property_id = str(result.inserted_id)
+
+    form_ids = form_collection.distinct("_id")
+
+    form_collection.update_many(
+        {"_id": {"$in": form_ids}},
+        {"$push": {"properties": property_id}}
+    )
+
+    property_data["_id"] = property_id
+    return property_data
+
+@app.delete("/properties/{property_id}")
+async def delete_property(property_id: str):
+    result = property_collection.delete_one({"_id": ObjectId(property_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    form_collection.update_many(
+        {},
+        {"$pull": {"properties": property_id}}
+    )
+
+    return {"message": "Property deleted successfully"}
+
+@app.delete("/templates/{template_id}")
+async def delete_property_template(template_id: str):
+    template = template_collection.find_one({"_id": ObjectId(template_id)})
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    result = template_collection.delete_one({"_id": ObjectId(template_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    properties = property_collection.find({"template_identifier": template["identifier"]})
+    property_ids = [str(prop["_id"]) for prop in properties]
+
+    property_collection.delete_many({"template_identifier": template["identifier"]})
+
+    form_collection.update_many(
+        {},
+        {"$pull": {"properties": {"$in": property_ids}}}
+    )
+
+    return {"message": "Template and associated properties deleted successfully"}

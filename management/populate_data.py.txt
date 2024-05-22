@@ -1,0 +1,106 @@
+from fastapi import FastAPI
+from pymongo import MongoClient
+from datetime import datetime
+
+app = FastAPI()
+
+# MongoDB connection
+client = MongoClient("mongodb://localhost:27017")
+db = client["property_db"]
+template_collection = db["property_templates"]
+property_collection = db["properties"]
+
+# Create sample PropertyTemplates
+sample_templates = [
+    {
+        "name": "Full Name",
+        "identifier": "full_name",
+        "type": "text",
+        "mandatory": True,
+        "category": "Personal"
+    },
+    {
+        "name": "Email",
+        "identifier": "email",
+        "type": "email",
+        "mandatory": True,
+        "category": "Contact"
+    },
+    {
+        "name": "Age",
+        "identifier": "age",
+        "type": "number",
+        "mandatory": False,
+        "category": "Personal"
+    }
+]
+
+# Insert sample PropertyTemplates
+template_collection.insert_many(sample_templates)
+
+# Create sample Properties
+sample_properties = [
+    {
+        "name": "John Doe",
+        "identifier": "john_doe_name",
+        "value": "John Doe",
+        "previous_value": None,
+        "template_identifier": "full_name",
+        "last_modified_by": "admin",
+        "last_modified_date": datetime.now(),
+        "created_by": "admin"
+    },
+    {
+        "name": "John Doe Email",
+        "identifier": "john_doe_email",
+        "value": "john.doe@example.com",
+        "previous_value": None,
+        "template_identifier": "email",
+        "last_modified_by": "admin",
+        "last_modified_date": datetime.now(),
+        "created_by": "admin"
+    },
+    {
+        "name": "John Doe Age",
+        "identifier": "john_doe_age",
+        "value": 30,
+        "previous_value": None,
+        "template_identifier": "age",
+        "last_modified_by": "admin",
+        "last_modified_date": datetime.now(),
+        "created_by": "admin"
+    },
+    {
+        "name": "Jane Smith",
+        "identifier": "jane_smith_name",
+        "value": "Jane Smith",
+        "previous_value": None,
+        "template_identifier": "full_name",
+        "last_modified_by": "admin",
+        "last_modified_date": datetime.now(),
+        "created_by": "admin"
+    },
+    {
+        "name": "Jane Smith Email",
+        "identifier": "jane_smith_email",
+        "value": "jane.smith@example.com",
+        "previous_value": None,
+        "template_identifier": "email",
+        "last_modified_by": "admin",
+        "last_modified_date": datetime.now(),
+        "created_by": "admin"
+    },
+    {
+        "name": "Jane Smith Age",
+        "identifier": "jane_smith_age",
+        "value": 25,
+        "previous_value": None,
+        "template_identifier": "age",
+        "last_modified_by": "admin",
+        "last_modified_date": datetime.now(),
+        "created_by": "admin"
+    }
+]
+
+# Insert sample Properties
+property_collection.insert_many(sample_properties)
