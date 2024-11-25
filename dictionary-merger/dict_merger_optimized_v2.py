@@ -1,193 +1,234 @@
-from typing import Dict, List, Set, Optional, Tuple
+from typing import Dict, List, Set, Optional, Tuple, DefaultDict
 from collections import defaultdict, deque
-import random
-import string
-import time
 import copy
+import time
 import sys
+from dataclasses import dataclass
+from itertools import chain
 
-class GraphValidationError(Exception):
-    pass
+@dataclass
+class PathInfo:
+    """Stores path information for an entity"""
+    full_path: List[str]
+    path_str: str
+    depth: int
 
-class GraphMerger:
+class OptimizedGraphMerger:
+    """High-performance path-based graph merger"""
+    
     @staticmethod
-    def validate_entity(entity_data: Dict, entity_id: str) -> Dict:
-        """Lightweight entity validation without deep copy"""
-        if not isinstance(entity_data, dict):
-            raise GraphValidationError(f"Entity {entity_id} must be a dictionary")
-        
-        entity_data.setdefault('name', f"Entity_{entity_id}")
-        entity_data.setdefault('children', [])
-        entity_data.setdefault('properties', {})
-        
-        if not isinstance(entity_data['children'], list):
-            entity_data['children'] = []
-        if not isinstance(entity_data['properties'], dict):
-            entity_data['properties'] = {}
-            
-        return entity_data
-
-    @staticmethod
-    def find_roots(entities: Dict) -> List[str]:
-        """Find roots efficiently using sets"""
-        all_children = set()
-        for entity in entities.values():
-            all_children.update(entity.get('children', []))
-        return [eid for eid in entities if eid not in all_children]
-
-    @staticmethod
-    def build_parent_child_maps(entities: Dict) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]]]:
-        """Build both parent->children and child->parent maps in one pass"""
-        parent_to_children = defaultdict(set)
-        child_to_parents = defaultdict(set)
-        
-        for parent_id, entity in entities.items():
-            for child in entity.get('children', []):
-                parent_to_children[parent_id].add(child)
-                child_to_parents[child].add(parent_id)
-                
-        return parent_to_children, child_to_parents
-
-    @staticmethod
-    def find_paths_breadth_first(
+    def build_indices(
         entities: Dict,
-        roots: Set[str],
-        child_to_parents: Dict[str, Set[str]]
-    ) -> Dict[str, List[str]]:
-        """Find all paths using breadth-first search"""
-        paths = {}
-        for root in roots:
-            queue = deque([(root, [root])])
-            visited = {root}
+        roots: List[str]
+    ) -> Tuple[DefaultDict[str, Set[str]], DefaultDict[str, Set[str]], Dict[str, PathInfo]]:
+        """Build optimized lookup indices for the graph"""
+        # Initialize indices
+        child_to_parent: DefaultDict[str, Set[str]] = defaultdict(set)
+        parent_to_children: DefaultDict[str, Set[str]] = defaultdict(set)
+        path_index: Dict[str, PathInfo] = {}
+        roots_set = set(roots)
+        
+        # Build parent-child relationships
+        for entity_id, entity in entities.items():
+            for child in entity.get('children', []):
+                child_to_parent[child].add(entity_id)
+                parent_to_children[entity_id].add(child)
+        
+        # Build paths using BFS
+        queue = deque((root, [root]) for root in roots_set)
+        while queue:
+            current_id, current_path = queue.popleft()
+            path_str = '/'.join(current_path)
+            path_index[current_id] = PathInfo(
+                full_path=current_path,
+                path_str=path_str,
+                depth=len(current_path)
+            )
             
-            while queue:
-                current, path = queue.popleft()
-                paths[current] = path
-                
-                # Get children directly from entities
-                children = set(entities[current].get('children', []))
-                for child in children:
-                    if child not in visited and child in entities:
-                        visited.add(child)
-                        queue.append((child, path + [child]))
-                        
-        return paths
+            # Add children to queue
+            for child in parent_to_children[current_id]:
+                if child not in path_index:
+                    queue.append((child, current_path + [child]))
+        
+        return child_to_parent, parent_to_children, path_index
+
+    @staticmethod
+    def find_matching_paths(
+        target_path_info: PathInfo,
+        source_paths: Dict[str, PathInfo],
+        depth_index: DefaultDict[int, Set[str]]
+    ) -> Optional[str]:
+        """Find matching paths efficiently using depth indexing"""
+        if target_path_info.depth not in depth_index:
+            return None
+            
+        target_prefix = '/'.join(target_path_info.full_path[:-1])
+        for candidate_id in depth_index[target_path_info.depth]:
+            candidate_path = source_paths[candidate_id]
+            if target_prefix == '/'.join(candidate_path.full_path[:-1]):
+                return candidate_id
+        return None
+
+    @staticmethod
+    def merge_properties(primary: Dict, secondary: Dict) -> Dict:
+        """Merge properties efficiently"""
+        if not secondary:
+            return primary
+        if not primary:
+            return secondary
+        return {**secondary, **primary}
 
     @classmethod
-    def merge(cls, master_graph: Dict, delta_graph: Dict) -> Dict:
-        """Merge graphs with optimized memory usage"""
+    def merge_graphs(cls, primary_graph: Dict, secondary_graph: Dict) -> Dict:
+        """Optimized path-based graph merger"""
         try:
-            # Shallow copy master graph and validate
+            # Initialize merged graph with primary
             merged = {
                 'entities': {},
-                'transitions': {},
-                'roots': []
+                'transitions': primary_graph['transitions'].copy(),
+                'roots': primary_graph['roots'].copy()
             }
             
-            # Process master entities first
-            for ent_id, entity in master_graph['entities'].items():
-                merged['entities'][ent_id] = cls.validate_entity(
-                    copy.deepcopy(entity), ent_id
-                )
+            # Build optimized indices
+            primary_c2p, primary_p2c, primary_paths = cls.build_indices(
+                primary_graph['entities'],
+                primary_graph['roots']
+            )
             
-            # Find roots and build relationship maps for master graph
-            merged['roots'] = cls.find_roots(merged['entities'])
-            parent_to_children, child_to_parents = cls.build_parent_child_maps(merged['entities'])
+            secondary_c2p, secondary_p2c, secondary_paths = cls.build_indices(
+                secondary_graph['entities'],
+                secondary_graph['roots']
+            )
             
-            # Process delta entities
-            for ent_id, entity in delta_graph['entities'].items():
-                if ent_id in merged['entities']:
-                    # Update existing entity
-                    existing = merged['entities'][ent_id]
-                    incoming = cls.validate_entity(entity, ent_id)
-                    
-                    # Merge properties
-                    existing['properties'].update(incoming.get('properties', {}))
-                    
-                    # Merge children
-                    new_children = set(existing['children'])
-                    new_children.update(incoming.get('children', []))
-                    existing['children'] = list(new_children)
-                else:
-                    # Add new entity
-                    merged['entities'][ent_id] = cls.validate_entity(
-                        copy.deepcopy(entity), ent_id
-                    )
+            # Build depth indices for faster path matching
+            primary_depth_index: DefaultDict[int, Set[str]] = defaultdict(set)
+            for ent_id, path_info in primary_paths.items():
+                primary_depth_index[path_info.depth].add(ent_id)
             
-            # Update roots after all entities are processed
-            merged['roots'] = cls.find_roots(merged['entities'])
+            # Track processed entities
+            processed_entities = set()
             
-            # Process transitions efficiently using sets
-            seen_transitions = {(t['source'], t['target']) 
-                              for t in master_graph['transitions'].values()}
+            # First pass: Process primary entities
+            for ent_id, entity in primary_graph['entities'].items():
+                merged['entities'][ent_id] = copy.copy(entity)
+                processed_entities.add(ent_id)
             
-            # Copy master transitions
-            merged['transitions'] = master_graph['transitions'].copy()
+            # Second pass: Process secondary entities
+            batch_updates: Dict[str, Dict] = {}
+            new_transitions: List[Tuple[str, Dict]] = []
             
-            # Add new transitions from delta
-            for trans_id, trans in delta_graph['transitions'].items():
-                source, target = trans.get('source'), trans.get('target')
-                if not (source and target):
+            for entity_id, entity_data in secondary_graph['entities'].items():
+                if entity_id in processed_entities:
                     continue
                     
-                pair = (source, target)
-                if (pair not in seen_transitions and 
-                    source in merged['entities'] and 
-                    target in merged['entities']):
-                    
-                    merged['transitions'][trans_id] = {
-                        'source': source,
-                        'target': target,
-                        'properties': trans.get('properties', {})
+                path_info = secondary_paths.get(entity_id)
+                if not path_info:
+                    continue
+                
+                matching_id = cls.find_matching_paths(
+                    path_info,
+                    primary_paths,
+                    primary_depth_index
+                )
+                
+                if matching_id and matching_id in merged['entities']:
+                    # Update existing entity
+                    batch_updates[matching_id] = {
+                        'properties': cls.merge_properties(
+                            merged['entities'][matching_id].get('properties', {}),
+                            entity_data.get('properties', {})
+                        ),
+                        'children': list(set(chain(
+                            merged['entities'][matching_id].get('children', []),
+                            entity_data.get('children', [])
+                        )))
                     }
-                    seen_transitions.add(pair)
+                else:
+                    # Add new entity
+                    merged['entities'][entity_id] = copy.copy(entity_data)
+                    processed_entities.add(entity_id)
+                    
+                    if entity_id in secondary_graph['roots']:
+                        merged['roots'].append(entity_id)
+            
+            # Apply batch updates
+            for entity_id, updates in batch_updates.items():
+                merged['entities'][entity_id].update(updates)
+            
+            # Process transitions efficiently
+            existing_transitions = {(t['source'], t['target']) 
+                                 for t in merged['transitions'].values()}
+            
+            for trans_id, trans_data in secondary_graph['transitions'].items():
+                source, target = trans_data['source'], trans_data['target']
+                if ((source in merged['entities']) and 
+                    (target in merged['entities']) and 
+                    (source, target) not in existing_transitions):
+                    
+                    new_trans_id = trans_id
+                    while new_trans_id in merged['transitions']:
+                        new_trans_id = f"{trans_id}_{len(merged['transitions'])}"
+                    
+                    merged['transitions'][new_trans_id] = copy.copy(trans_data)
+                    existing_transitions.add((source, target))
             
             return merged
             
         except Exception as e:
-            raise GraphValidationError(f"Error merging graphs: {str(e)}")
+            print(f"Error during merge: {str(e)}")
+            raise
 
-def generate_test_graphs(num_entities: int) -> Tuple[Dict, Dict]:
-    def generate_id() -> str:
-        return ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+def generate_large_test_graphs(num_entities: int = 10000) -> Tuple[Dict, Dict]:
+    """Generate large test graphs efficiently"""
+    from random import randint, choices, sample
+    from string import ascii_lowercase, digits
     
-    def create_graph(base_entities: Dict = None, max_depth: int = 3) -> Dict:
+    def generate_id() -> str:
+        return ''.join(choices(ascii_lowercase + digits, k=6))
+    
+    def create_graph(shared_entities: Dict = None) -> Dict:
         entities = {}
-        transitions = {}
-        level_entities = defaultdict(list)
-        current_level = 0
+        id_to_level = {}
+        level_to_ids: DefaultDict[int, List[str]] = defaultdict(list)
+        max_depth = min(10, num_entities // 1000)  # Limit depth for large graphs
         
-        # Create base entities
-        remaining = num_entities
-        while remaining > 0:
-            batch_size = min(remaining, 1000)  # Process in batches
+        # Create or copy base entities
+        if shared_entities:
+            entities = shared_entities.copy()
+            for ent_id in shared_entities:
+                level = 0
+                id_to_level[ent_id] = level
+                level_to_ids[level].append(ent_id)
+        
+        # Create new entities
+        while len(entities) < num_entities:
+            batch_size = min(1000, num_entities - len(entities))
             for _ in range(batch_size):
                 ent_id = generate_id()
+                level = randint(0, max_depth)
                 entities[ent_id] = {
                     "name": f"Entity_{ent_id}",
                     "children": [],
-                    "properties": {"level": current_level}
+                    "properties": {"level": level}
                 }
-                level_entities[current_level].append(ent_id)
-            remaining -= batch_size
+                id_to_level[ent_id] = level
+                level_to_ids[level].append(ent_id)
         
-        # Create hierarchy with controlled depth
-        for level in range(max_depth - 1):
-            for parent_id in level_entities[level]:
-                # Add 2-3 children randomly
-                num_children = random.randint(2, 3)
-                available_children = level_entities[level + 1]
-                if available_children:
-                    children = random.sample(available_children, 
-                                          min(num_children, len(available_children)))
-                    entities[parent_id]["children"].extend(children)
+        # Create hierarchy
+        for level in range(1, max_depth + 1):
+            for child_id in level_to_ids[level]:
+                if level_to_ids[level - 1]:
+                    parent_id = sample(level_to_ids[level - 1], 1)[0]
+                    entities[parent_id]["children"].append(child_id)
         
-        # Create transitions (limited number for performance)
+        # Identify roots and create minimal transitions
+        roots = level_to_ids[0]
+        transitions = {}
+        
         num_transitions = min(num_entities // 10, 1000)
-        entity_ids = list(entities.keys())
-        for _ in range(num_transitions):
-            source = random.choice(entity_ids)
-            target = random.choice(entity_ids)
+        for i in range(num_transitions):
+            source = sample(list(entities.keys()), 1)[0]
+            target = sample(list(entities.keys()), 1)[0]
             if source != target:
                 trans_id = generate_id()
                 transitions[trans_id] = {
@@ -196,48 +237,48 @@ def generate_test_graphs(num_entities: int) -> Tuple[Dict, Dict]:
                     "properties": {}
                 }
         
-        # Find roots
-        all_children = {child for e in entities.values() for child in e["children"]}
-        roots = [eid for eid in level_entities[0] if eid not in all_children]
-        
         return {"entities": entities, "transitions": transitions, "roots": roots}
     
-    # Create master and delta graphs
-    master = create_graph()
+    # Create primary graph
+    primary = create_graph()
     
-    # Create delta with some overlap
-    shared_entities = {k: v for k, v in random.sample(list(master['entities'].items()), 
-                                                    num_entities // 4)}
-    delta = create_graph(shared_entities)
+    # Create secondary with some shared entities
+    shared = {k: v.copy() for k, v in 
+             sample(list(primary['entities'].items()), num_entities // 4)}
+    secondary = create_graph(shared)
     
-    return master, delta
+    return primary, secondary
 
 def test_merger_performance():
-    num_entities = 100000
+    """Test merger performance with large graphs"""
+    num_entities = 10000
     print(f"Generating test graphs with {num_entities} entities...")
     
-    start_gen = time.time()
-    master, delta = generate_test_graphs(num_entities)
-    end_gen = time.time()
+    start_time = time.time()
+    primary, secondary = generate_large_test_graphs(num_entities)
+    gen_time = time.time() - start_time
     
-    print(f"Generation time: {end_gen - start_gen:.2f} seconds")
-    print(f"\nMaster graph: {len(master['entities'])} entities, "
-          f"{len(master['transitions'])} transitions, {len(master['roots'])} roots")
-    print(f"Delta graph: {len(delta['entities'])} entities, "
-          f"{len(delta['transitions'])} transitions, {len(delta['roots'])} roots")
+    print(f"Generation time: {gen_time:.2f} seconds")
+    print(f"Primary: {len(primary['entities'])} entities, "
+          f"{len(primary['transitions'])} transitions, "
+          f"{len(primary['roots'])} roots")
+    print(f"Secondary: {len(secondary['entities'])} entities, "
+          f"{len(secondary['transitions'])} transitions, "
+          f"{len(secondary['roots'])} roots")
     
     print("\nMerging graphs...")
-    start_merge = time.time()
+    start_time = time.time()
     
     try:
-        merged = GraphMerger.merge(master, delta)
-        end_merge = time.time()
+        merged = OptimizedGraphMerger.merge_graphs(primary, secondary)
+        merge_time = time.time() - start_time
         
-        print(f"\nMerged graph: {len(merged['entities'])} entities, "
-              f"{len(merged['transitions'])} transitions, {len(merged['roots'])} roots")
-        print(f"Merge time: {end_merge - start_merge:.2f} seconds")
+        print(f"Merge time: {merge_time:.2f} seconds")
+        print(f"Merged: {len(merged['entities'])} entities, "
+              f"{len(merged['transitions'])} transitions, "
+              f"{len(merged['roots'])} roots")
         
-        return master, delta, merged
+        return primary, secondary, merged
         
     except Exception as e:
         print(f"Error: {str(e)}")
