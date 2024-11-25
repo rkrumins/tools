@@ -2,48 +2,53 @@ from typing import Dict, List
 import copy
 import json
 
+
+def get_entity_path(graph: Dict, entity_id: str, path: List[str] = None) -> List[str]:
+    if path is None:
+        path = []
+    if entity_id in graph['roots']:
+        return [entity_id]
+    for ent_id, ent_data in graph['entities'].items():
+        if entity_id in ent_data['children']:
+            new_path = get_entity_path(graph, ent_id, path)
+            if new_path is not None:
+                return new_path + [entity_id]
+    return None
+
+
+def get_all_paths(graph: Dict) -> Dict[str, List[str]]:
+    paths = {}
+    for entity_id in graph['entities']:
+        path = get_entity_path(graph, entity_id)
+        if path:
+            paths[entity_id] = path
+    return paths
+
+
+def find_equivalent_path(entity_path: List[str], paths_dict: Dict[str, List[str]]) -> str:
+    for entity_id, path in paths_dict.items():
+        if len(path) == len(entity_path):
+            match = True
+            for i in range(len(path) - 1):
+                if path[i] != entity_path[i]:
+                    match = False
+                    break
+            if match:
+                return entity_id
+    return None
+
+
+def merge_properties(primary_props: Dict, secondary_props: Dict) -> Dict:
+    """Merge properties with primary taking precedence"""
+    merged_props = copy.deepcopy(secondary_props)
+    merged_props.update(primary_props)
+    return merged_props
+
+
 def merge_graph_dicts(primary_graph: Dict, secondary_graph: Dict) -> Dict:
     """
     Merge two graph dictionaries with properties support.
     """
-    def get_entity_path(graph: Dict, entity_id: str, path: List[str] = None) -> List[str]:
-        if path is None:
-            path = []
-        if entity_id in graph['roots']:
-            return [entity_id]
-        for ent_id, ent_data in graph['entities'].items():
-            if entity_id in ent_data['children']:
-                new_path = get_entity_path(graph, ent_id, path)
-                if new_path is not None:
-                    return new_path + [entity_id]
-        return None
-    
-    def get_all_paths(graph: Dict) -> Dict[str, List[str]]:
-        paths = {}
-        for entity_id in graph['entities']:
-            path = get_entity_path(graph, entity_id)
-            if path:
-                paths[entity_id] = path
-        return paths
-    
-    def find_equivalent_path(entity_path: List[str], paths_dict: Dict[str, List[str]]) -> str:
-        for entity_id, path in paths_dict.items():
-            if len(path) == len(entity_path):
-                match = True
-                for i in range(len(path) - 1):
-                    if path[i] != entity_path[i]:
-                        match = False
-                        break
-                if match:
-                    return entity_id
-        return None
-
-    def merge_properties(primary_props: Dict, secondary_props: Dict) -> Dict:
-        """Merge properties with primary taking precedence"""
-        merged_props = copy.deepcopy(secondary_props)
-        merged_props.update(primary_props)
-        return merged_props
-
     # Initialize merged graph
     merged = copy.deepcopy(primary_graph)
     
