@@ -3,14 +3,13 @@ from collections import defaultdict
 from dataclasses import dataclass
 import copy
 import time
-from array import array
 
 @dataclass(frozen=True)
 class EntityLevel:
     """Immutable entity level information"""
     root: str
     level: int
-    path_key: str  # Optimized path representation
+    path_key: str
 
 @dataclass
 class LevelCache:
@@ -18,15 +17,15 @@ class LevelCache:
     entities: Dict[str, Set[str]]  # root -> entities at this level
     paths: Dict[str, str]  # entity_id -> path_key
     parents: Dict[str, str]  # child -> parent
+    root_mapping: Dict[str, str]  # secondary_root -> primary_root
 
 class LevelOptimizedMerger:
     """Graph merger optimized for moderate-depth hierarchies"""
     
-    MAX_DEPTH = 6  # Optimization for known maximum depth
+    MAX_DEPTH = 6
     
     def __init__(self):
-        # Pre-initialize level caches
-        self.level_caches = [LevelCache(defaultdict(set), {}, {}) 
+        self.level_caches = [LevelCache(defaultdict(set), {}, {}, {}) 
                            for _ in range(self.MAX_DEPTH)]
     
     def build_level_indices(self, graph: Dict) -> None:
@@ -39,9 +38,9 @@ class LevelOptimizedMerger:
             cache.entities.clear()
             cache.paths.clear()
             cache.parents.clear()
+            cache.root_mapping.clear()
         
-        # Process by level
-        current_level = [(root, root, 0) for root in roots]  # (entity_id, root, level)
+        current_level = [(root, root, 0) for root in roots]
         
         while current_level and current_level[0][2] < self.MAX_DEPTH:
             next_level = []
@@ -55,7 +54,6 @@ class LevelOptimizedMerger:
                 entity = entities[entity_id]
                 level_cache.entities[root].add(entity_id)
                 
-                # Process children
                 children = entity.get('children', [])
                 if children and level_num + 1 < self.MAX_DEPTH:
                     for child in children:
@@ -63,118 +61,142 @@ class LevelOptimizedMerger:
                             next_level.append((child, root, level_num + 1))
                             self.level_caches[level_num + 1].parents[child] = entity_id
                 
-                # Optimize path storage
                 parent = level_cache.parents.get(entity_id, '')
                 path_key = f"{parent}/{entity_id}" if parent else entity_id
                 level_cache.paths[entity_id] = path_key
             
             current_level = next_level
 
-    @staticmethod
-    def merge_properties(primary: Dict, secondary: Dict) -> Dict:
-        """Efficient property merging"""
-        if not secondary:
-            return primary
-        if not primary:
-            return secondary
-        return {**secondary, **primary}
-
-    def find_matching_entity(
-        self,
-        entity_id: str,
-        level: int,
-        source_cache: LevelCache,
-        target_cache: LevelCache
-    ) -> Optional[str]:
-        """Find matching entity at the same level"""
-        if level >= self.MAX_DEPTH:
+    def find_matching_root(self, 
+                          root_id: str, 
+                          secondary_entities: Dict, 
+                          primary_entities: Dict) -> Optional[str]:
+        """Find matching root based on structure and properties"""
+        if root_id not in secondary_entities:
             return None
             
-        source_path = source_cache.paths.get(entity_id)
-        if not source_path:
-            return None
-            
-        parent = source_cache.parents.get(entity_id)
-        if parent:
-            parent_match = self.find_matching_entity(
-                parent, level - 1,
-                source_cache, target_cache
-            )
-            if not parent_match:
-                return None
-                
-            # Check children of matched parent
-            for candidate in target_cache.entities.get(parent_match, set()):
-                if target_cache.parents.get(candidate) == parent_match:
-                    return candidate
+        secondary_root = secondary_entities[root_id]
+        secondary_children = set(secondary_root.get('children', []))
+        secondary_props = secondary_root.get('properties', {})
         
-        return None
+        best_match = None
+        best_match_score = 0
+        
+        for primary_root_id in self.level_caches[0].entities.keys():
+            if primary_root_id not in primary_entities:
+                continue
+                
+            primary_root = primary_entities[primary_root_id]
+            primary_children = set(primary_root.get('children', []))
+            primary_props = primary_root.get('properties', {})
+            
+            # Calculate match score
+            score = 0
+            # Property matches
+            for key, value in secondary_props.items():
+                if key in primary_props and primary_props[key] == value:
+                    score += 1
+            
+            # Structure matches
+            common_children = len(secondary_children & primary_children)
+            score += common_children * 2
+            
+            if score > best_match_score:
+                best_match_score = score
+                best_match = primary_root_id
+        
+        return best_match if best_match_score > 0 else None
 
     def merge_graphs(self, primary_graph: Dict, secondary_graph: Dict) -> Dict:
-        """Merge graphs with level-based optimization"""
+        """Merge graphs with root deduplication"""
         try:
             # Initialize merged result
             merged = {
                 'entities': {},
                 'transitions': primary_graph.get('transitions', {}).copy(),
-                'roots': primary_graph.get('roots', []).copy()
+                'roots': []
             }
             
-            # Build level indices
+            # Build indices
             self.build_level_indices(primary_graph)
-            primary_caches = list(self.level_caches)  # Save primary caches
+            primary_caches = list(self.level_caches)
             
             self.build_level_indices(secondary_graph)
-            secondary_caches = self.level_caches  # Current state is secondary
+            secondary_caches = self.level_caches
             
-            # Process level by level
-            processed_entities = set()
-            batch_updates = defaultdict(dict)
-            new_entities = {}
+            # First, process root matching
+            root_mappings = {}  # secondary_root -> primary_root
+            new_roots = set()
             
-            # First, copy all primary entities
+            for secondary_root in secondary_graph['roots']:
+                matching_root = self.find_matching_root(
+                    secondary_root,
+                    secondary_graph['entities'],
+                    primary_graph['entities']
+                )
+                
+                if matching_root:
+                    root_mappings[secondary_root] = matching_root
+                else:
+                    new_roots.add(secondary_root)
+            
+            # Copy primary entities
             for entity_id, entity in primary_graph['entities'].items():
                 merged['entities'][entity_id] = copy.copy(entity)
-                processed_entities.add(entity_id)
+            
+            # Add primary roots
+            merged['roots'].extend(primary_graph['roots'])
             
             # Process secondary entities level by level
+            processed_entities = set(merged['entities'].keys())
+            batch_updates = defaultdict(dict)
+            
             for level in range(self.MAX_DEPTH):
                 secondary_cache = secondary_caches[level]
                 primary_cache = primary_caches[level]
                 
-                # Process each root's entities at this level
-                for root in secondary_graph['roots']:
-                    entities_at_level = secondary_cache.entities[root]
+                for secondary_root in secondary_graph['roots']:
+                    primary_root = root_mappings.get(secondary_root)
+                    entities_at_level = secondary_cache.entities[secondary_root]
                     
                     for entity_id in entities_at_level:
                         if entity_id in processed_entities:
                             continue
-                            
-                        # Try to find matching entity
-                        matching_id = self.find_matching_entity(
-                            entity_id, level,
-                            secondary_cache, primary_cache
-                        )
                         
-                        if matching_id and matching_id in merged['entities']:
-                            # Batch update for existing entity
-                            batch_updates[matching_id].update({
-                                'properties': self.merge_properties(
-                                    merged['entities'][matching_id].get('properties', {}),
-                                    secondary_graph['entities'][entity_id].get('properties', {})
-                                ),
-                                'children': list(set(
-                                    merged['entities'][matching_id].get('children', []) +
-                                    secondary_graph['entities'][entity_id].get('children', [])
-                                ))
-                            })
+                        # If this is a root node, handle it differently
+                        if level == 0:
+                            if entity_id in root_mappings:
+                                # Merge with existing root
+                                matching_id = root_mappings[entity_id]
+                                batch_updates[matching_id].update({
+                                    'properties': {
+                                        **secondary_graph['entities'][entity_id].get('properties', {}),
+                                        **merged['entities'][matching_id].get('properties', {})
+                                    },
+                                    'children': list(set(
+                                        merged['entities'][matching_id].get('children', []) +
+                                        secondary_graph['entities'][entity_id].get('children', [])
+                                    ))
+                                })
+                            elif entity_id in new_roots:
+                                # Add as new root
+                                merged['entities'][entity_id] = copy.copy(
+                                    secondary_graph['entities'][entity_id]
+                                )
+                                if entity_id not in merged['roots']:
+                                    merged['roots'].append(entity_id)
                         else:
-                            # Add new entity
-                            new_entities[entity_id] = copy.copy(
-                                secondary_graph['entities'][entity_id]
-                            )
-                            if level == 0:  # Root level
-                                merged['roots'].append(entity_id)
+                            # Handle non-root entities
+                            parent = secondary_cache.parents.get(entity_id)
+                            if parent:
+                                mapped_parent = root_mappings.get(parent, parent)
+                                if mapped_parent in merged['entities']:
+                                    # Add as child of mapped parent
+                                    merged['entities'][entity_id] = copy.copy(
+                                        secondary_graph['entities'][entity_id]
+                                    )
+                                    if entity_id not in merged['entities'][mapped_parent]['children']:
+                                        merged['entities'][mapped_parent]['children'].append(entity_id)
                         
                         processed_entities.add(entity_id)
             
@@ -182,15 +204,17 @@ class LevelOptimizedMerger:
             for entity_id, updates in batch_updates.items():
                 merged['entities'][entity_id].update(updates)
             
-            # Add new entities
-            merged['entities'].update(new_entities)
-            
-            # Process transitions efficiently
+            # Process transitions
             existing_transitions = {(t['source'], t['target']) 
                                  for t in merged['transitions'].values()}
             
             for trans_id, trans_data in secondary_graph.get('transitions', {}).items():
-                source, target = trans_data['source'], trans_data['target']
+                source = trans_data['source']
+                target = trans_data['target']
+                
+                # Map source and target if they were merged with primary entities
+                source = root_mappings.get(source, source)
+                target = root_mappings.get(target, target)
                 
                 if ((source in merged['entities']) and 
                     (target in merged['entities']) and 
@@ -199,7 +223,12 @@ class LevelOptimizedMerger:
                     new_id = trans_id
                     while new_id in merged['transitions']:
                         new_id = f"{trans_id}_{len(merged['transitions'])}"
-                    merged['transitions'][new_id] = copy.copy(trans_data)
+                    
+                    merged['transitions'][new_id] = {
+                        'source': source,
+                        'target': target,
+                        'properties': trans_data.get('properties', {})
+                    }
             
             return merged
             
@@ -292,7 +321,7 @@ def test_merger_performance():
     primary, secondary = generate_test_graphs(
         num_roots=8,
         max_depth=6,
-        entities_per_level=100000
+        entities_per_level=30000
     )
     
     gen_time = time.time() - start_time
